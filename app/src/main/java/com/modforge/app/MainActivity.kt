@@ -61,8 +61,11 @@ class MainActivity : ComponentActivity() {
 /** Talks to the GitHub API. All calls are blocking, call them from Dispatchers.IO. */
 class GitHub(private val token: String, private val repo: String) {
     private val http = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(300, TimeUnit.SECONDS)
+        .callTimeout(180, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private fun req(path: String) = Request.Builder()
