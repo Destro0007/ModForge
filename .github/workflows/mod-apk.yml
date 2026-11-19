@@ -1,0 +1,65 @@
+name: mod-apk
+run-name: "mod ${{ inputs.job_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Job id created by the ModForge app"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  mod:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      JOB: ${{ inputs.job_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Get apktool
+        run: curl -fsSL -o apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
+
+      - name: Decompile
+        run: java -jar apktool.jar d -f -o work/src "jobs/$JOB/input.apk"
+
+      - name: AI edit
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python tools/ai_mod.py work/src "jobs/$JOB/instruction.txt" work/report.md
+
+      - name: Rebuild
+        run: java -jar apktool.jar b work/src -o work/unsigned.apk
+
+      - name: Align and sign
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -f -p 4 work/unsigned.apk work/aligned.apk
+          keytool -genkeypair -keystore work/k.jks -storepass modforge -keypass modforge \
+            -alias k -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=ModForge"
+          "$BT/apksigner" sign --ks work/k.jks --ks-pass pass:modforge --key-pass pass:modforge \
+            --out work/modded.apk work/aligned.apk
+
+      - name: Publish result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "job-$JOB" work/modded.apk \
+            --title "job-$JOB" --notes-file work/report.md
+          git rm -rq "jobs/$JOB"
+          git -c user.name=modforge -c user.email=modforge@users.noreply.github.com \
+            commit -m "cleanup $JOB" || true
+          git push || true
